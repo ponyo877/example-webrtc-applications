@@ -8,6 +8,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"flag"
 	"log"
@@ -21,6 +22,9 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
+
+//go:embed index.html
+var f embed.FS
 
 // nolint
 var (
@@ -55,18 +59,17 @@ func main() {
 	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
 
 	// Read index.html from disk into memory, serve whenever anyone requests /
-	indexHTML, err := os.ReadFile("index.html")
+	indexTemplate, err := template.ParseFS(f, "index.html")
 	if err != nil {
 		panic(err)
 	}
-	indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
 	// websocket handler
 	http.HandleFunc("/websocket", websocketHandler)
 
 	// index.html handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if err := indexTemplate.Execute(w, "ws://"+r.Host+"/websocket"); err != nil {
+		if err := indexTemplate.Execute(w, "wss://"+r.Host+"/websocket"); err != nil {
 			log.Fatal(err)
 		}
 	})
@@ -238,7 +241,19 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	defer c.Close() //nolint
 
 	// Create new PeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs:           []string{os.Getenv("TURN_URL")},
+				Username:       os.Getenv("TURN_USER"),
+				Credential:     os.Getenv("TURN_PASS"),
+				CredentialType: webrtc.ICECredentialTypePassword,
+			},
+			{
+				URLs: []string{"stun:stun.l.google.com:19302"},
+			},
+		},
+	})
 	if err != nil {
 		log.Print(err)
 		return
